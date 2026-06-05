@@ -34,7 +34,7 @@ export default function Dashboard() {
     if (!url) return
     if (credits <= 0) { setStatus('Sin créditos. Actualiza tu plan.'); return }
     setLoading(true)
-    setStatus('⏳ Analizando vídeo con IA..."')
+    setStatus('⏳ Analizando vídeo con IA...')
 
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -75,6 +75,26 @@ export default function Dashboard() {
 
   const gold = '#C9A84C'
   const goldGrad = 'linear-gradient(135deg, #C9A84C, #e8c96a)'
+
+  const plans = [
+    {
+      name: 'Free', price: '$0', clips: '3 clips/mes',
+      features: ['3 créditos', 'Formato 9:16', 'Subtítulos básicos'],
+      color: '#333', cta: 'Plan actual', disabled: true, link: null
+    },
+    {
+      name: 'Creator', price: '$26.99', clips: '200 clips/mes',
+      features: ['200 créditos', 'Subtítulos animados', 'Gameplay overlay', 'Export HD'],
+      color: gold, cta: 'Empezar Creator', popular: true,
+      link: 'https://buy.stripe.com/test_5kQbJ2ff7d3Cezmh0K8bS00'
+    },
+    {
+      name: 'Pro', price: '$69.99', clips: 'Ilimitado',
+      features: ['Créditos infinitos', 'Editor avanzado', 'Auto-publish', 'Viral Score IA', 'Soporte prioritario'],
+      color: '#a855f7', cta: 'Empezar Pro',
+      link: 'https://buy.stripe.com/test_9B614o7MF5BagHudOy8bS01'
+    },
+  ]
 
   return (
     <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', display: 'flex' }}>
@@ -243,11 +263,7 @@ export default function Dashboard() {
 
         {activeTab === 'upgrade' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-            {[
-              { name: 'Free', price: '$0', clips: '3 clips/mes', features: ['3 créditos', 'Formato 9:16', 'Subtítulos básicos'], color: '#333', cta: 'Plan actual', disabled: true },
-              { name: 'Creator', price: '$26.99', clips: '200 clips/mes', features: ['200 créditos', 'Subtítulos animados', 'Gameplay overlay', 'Export HD'], color: gold, cta: 'Empezar Creator', popular: true },
-              { name: 'Pro', price: '$69.99', clips: 'Ilimitado', features: ['Créditos infinitos', 'Editor avanzado', 'Auto-publish', 'Viral Score IA', 'Soporte prioritario'], color: '#a855f7', cta: 'Empezar Pro' },
-            ].map((p, i) => (
+            {plans.map((p, i) => (
               <div key={i} style={{
                 background: '#0d0d0d', border: `1px solid ${p.popular ? gold + '44' : '#161616'}`,
                 borderRadius: '16px', padding: '28px', position: 'relative',
@@ -264,13 +280,16 @@ export default function Dashboard() {
                     </div>
                   ))}
                 </div>
-                <button disabled={p.disabled} style={{
-                  width: '100%', padding: '12px', borderRadius: '8px', border: 'none',
-                  background: p.disabled ? '#111' : p.popular ? goldGrad : `${p.color}22`,
-                  color: p.disabled ? '#333' : p.popular ? '#000' : p.color,
-                  fontWeight: 'bold', cursor: p.disabled ? 'not-allowed' : 'pointer', fontSize: '13px',
-                  border: p.disabled ? '1px solid #1a1a1a' : p.popular ? 'none' : `1px solid ${p.color}44`
-                }}>
+                <button
+                  disabled={p.disabled}
+                  onClick={() => p.link && window.open(p.link, '_blank')}
+                  style={{
+                    width: '100%', padding: '12px', borderRadius: '8px',
+                    background: p.disabled ? '#111' : p.popular ? goldGrad : `${p.color}22`,
+                    color: p.disabled ? '#333' : p.popular ? '#000' : p.color,
+                    fontWeight: 'bold', cursor: p.disabled ? 'not-allowed' : 'pointer', fontSize: '13px',
+                    border: p.disabled ? '1px solid #1a1a1a' : p.popular ? 'none' : `1px solid ${p.color}44`
+                  }}>
                   {p.cta}
                 </button>
               </div>
