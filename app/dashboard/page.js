@@ -34,12 +34,39 @@ export default function Dashboard() {
     if (!url) return
     if (credits <= 0) { setStatus('Sin créditos. Actualiza tu plan.'); return }
     setLoading(true)
-    setStatus('Analizando vídeo con IA...')
+    setStatus('⏳ Analizando vídeo con IA..."')
+
     const { data: { user } } = await supabase.auth.getUser()
+
     await supabase.from('clips').insert({ user_id: user.id, title: url, status: 'processing' })
     await supabase.from('users').update({ credits: credits - 1 }).eq('id', user.id)
     setCredits(credits - 1)
-    setStatus('✅ Clip en cola. Te avisamos cuando esté listo.')
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url, user_id: user.id })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setStatus(`✅ ¡${data.total} clips generados! Revisa "Mis clips".`)
+        for (const clip of data.clips) {
+          await supabase.from('clips').insert({
+            user_id: user.id,
+            title: clip.title,
+            status: 'done',
+            video_url: clip.file
+          })
+        }
+      } else {
+        setStatus('❌ Error procesando el vídeo. Inténtalo de nuevo.')
+      }
+    } catch (error) {
+      setStatus('❌ No se pudo conectar con el servidor.')
+    }
+
     setUrl('')
     setLoading(false)
     const { data: clipsData } = await supabase.from('clips').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
@@ -59,7 +86,6 @@ export default function Dashboard() {
           <div style={{ fontSize: '9px', color: '#333', letterSpacing: '2px', marginTop: '2px' }}>AI CLIPPING PLATFORM</div>
         </div>
 
-        {/* Nav items */}
         {[
           { id: 'generate', icon: '⚡', label: 'Generar clips' },
           { id: 'clips', icon: '🎬', label: 'Mis clips' },
@@ -78,7 +104,6 @@ export default function Dashboard() {
           </div>
         ))}
 
-        {/* User info bottom */}
         <div style={{ marginTop: 'auto', padding: '20px', borderTop: '1px solid #161616' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
             <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: goldGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', color: '#000' }}>
@@ -98,7 +123,6 @@ export default function Dashboard() {
       {/* Main content */}
       <div style={{ marginLeft: '220px', flex: 1, padding: '40px' }}>
 
-        {/* Header */}
         <div style={{ marginBottom: '40px' }}>
           <h2 style={{ fontSize: '26px', fontWeight: 'bold', marginBottom: '6px' }}>
             {activeTab === 'generate' && 'Genera tu clip viral'}
@@ -112,7 +136,6 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Stats row */}
         {activeTab === 'generate' && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
@@ -124,7 +147,6 @@ export default function Dashboard() {
                 <div key={i} onClick={s.onClick} style={{
                   background: '#0d0d0d', border: '1px solid #161616', borderRadius: '14px',
                   padding: '22px 24px', cursor: s.onClick ? 'pointer' : 'default',
-                  transition: 'border-color 0.2s'
                 }}>
                   <div style={{ color: '#444', fontSize: '11px', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '10px' }}>{s.label}</div>
                   <div style={{ color: s.color, fontSize: '30px', fontWeight: 'bold', marginBottom: '4px' }}>{s.value}</div>
@@ -133,7 +155,6 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {/* Generator */}
             <div style={{ background: '#0d0d0d', border: `1px solid ${gold}22`, borderRadius: '16px', padding: '32px', marginBottom: '24px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: goldGrad, opacity: 0.4 }}></div>
               <div style={{ marginBottom: '20px' }}>
@@ -164,7 +185,6 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* Features row */}
               <div style={{ display: 'flex', gap: '24px', marginTop: '24px', paddingTop: '24px', borderTop: '1px solid #111' }}>
                 {['🎯 Detección viral con IA', '📝 Subtítulos automáticos', '📱 Formato 9:16', '🎮 Gameplay overlay'].map((f, i) => (
                   <div key={i} style={{ fontSize: '12px', color: '#333' }}>{f}</div>
@@ -174,7 +194,6 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* Clips tab */}
         {activeTab === 'clips' && (
           <div>
             {clips.length === 0 ? (
@@ -196,14 +215,25 @@ export default function Dashboard() {
                         <div style={{ fontSize: '11px', color: '#333' }}>{new Date(clip.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
                       </div>
                     </div>
-                    <span style={{
-                      fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
-                      background: clip.status === 'done' ? 'rgba(34,197,94,0.08)' : 'rgba(201,168,76,0.08)',
-                      color: clip.status === 'done' ? '#22c55e' : gold,
-                      border: `1px solid ${clip.status === 'done' ? '#22c55e22' : gold + '22'}`
-                    }}>
-                      {clip.status === 'done' ? '✓ Listo' : '⏳ Procesando'}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      {clip.status === 'done' && clip.video_url && (
+                        <a href={clip.video_url} download style={{
+                          fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
+                          background: 'rgba(201,168,76,0.08)', color: gold,
+                          border: `1px solid ${gold}22`, textDecoration: 'none'
+                        }}>
+                          ⬇ Descargar
+                        </a>
+                      )}
+                      <span style={{
+                        fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
+                        background: clip.status === 'done' ? 'rgba(34,197,94,0.08)' : 'rgba(201,168,76,0.08)',
+                        color: clip.status === 'done' ? '#22c55e' : gold,
+                        border: `1px solid ${clip.status === 'done' ? '#22c55e22' : gold + '22'}`
+                      }}>
+                        {clip.status === 'done' ? '✓ Listo' : '⏳ Procesando'}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -211,7 +241,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Upgrade tab */}
         {activeTab === 'upgrade' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
             {[
