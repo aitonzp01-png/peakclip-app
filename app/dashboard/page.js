@@ -43,7 +43,8 @@ export default function Dashboard() {
     setCredits(credits - 1)
 
     try {
-const response = await fetch('https://peakclip-backend-production.up.railway.app/process', {        method: 'POST',
+      const response = await fetch('https://peakclip-backend-production.up.railway.app/process', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url, user_id: user.id })
       })
@@ -234,7 +235,18 @@ const response = await fetch('https://peakclip-backend-production.up.railway.app
                         <div style={{ fontSize: '11px', color: '#333' }}>{new Date(clip.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {clip.status === 'done' && (
+                        <button
+                          onClick={() => window.location.href = `/editor?id=${clip.id}`}
+                          style={{
+                            fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
+                            background: 'rgba(201,168,76,0.08)', color: gold,
+                            border: `1px solid ${gold}22`, cursor: 'pointer'
+                          }}>
+                          ✏️ Editar
+                        </button>
+                      )}
                       {clip.status === 'done' && clip.video_url && (
                         <a href={clip.video_url} download style={{
                           fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
