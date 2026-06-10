@@ -43,8 +43,7 @@ export default function Dashboard() {
     setCredits(credits - 1)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/process', {
-        method: 'POST',
+const response = await fetch('https://peakclip-backend-production.up.railway.app/process', {        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url, user_id: user.id })
       })
