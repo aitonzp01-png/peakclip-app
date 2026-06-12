@@ -1,6 +1,9 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { brand, brandGrad } from '../../lib/tokens'
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
 
 export default function Dashboard() {
   const [user, setUser] = useState(null)
@@ -11,19 +14,41 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [activeTab, setActiveTab] = useState('generate')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const p = params.get('plan')
+    if (p === 'creator' || p === 'pro') setActiveTab('upgrade')
+
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { window.location.href = '/login'; return }
       setUser(user)
       const { data } = await supabase.from('users').select('*').eq('id', user.id).single()
       if (data) { setCredits(data.credits); setPlan(data.plan) }
-      const { data: clipsData } = await supabase.from('clips').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
-      if (clipsData) setClips(clipsData)
+      loadClips(user.id)
     }
     getUser()
   }, [])
+
+  const loadClips = async (userId) => {
+    const { data } = await supabase.from('clips').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+    if (data) setClips(data)
+  }
+
+  const pollClipStatus = async (clipId, userId) => {
+    let attempts = 0
+    const poll = setInterval(async () => {
+      attempts++
+      const { data } = await supabase.from('clips').select('*').eq('id', clipId).single()
+      if (data?.video_url || attempts > 30) {
+        clearInterval(poll)
+        loadClips(userId)
+      }
+    }, 3000)
+  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -31,184 +56,209 @@ export default function Dashboard() {
   }
 
   const handleSubmit = async () => {
-    if (!url) return
-    if (credits <= 0) { setStatus('Sin créditos. Actualiza tu plan.'); return }
+    if (!url || !user) return
+    if (credits <= 0 && plan !== 'pro') { setStatus('No credits remaining. Upgrade your plan.'); return }
     setLoading(true)
-    setStatus('⏳ Analizando vídeo con IA...')
-
-    const { data: { user } } = await supabase.auth.getUser()
-
-    await supabase.from('clips').insert({ user_id: user.id, title: url, status: 'processing' })
-    await supabase.from('users').update({ credits: credits - 1 }).eq('id', user.id)
-    setCredits(credits - 1)
+    setStatus('Processing video with AI...')
 
     try {
-      const response = await fetch('https://peakclip-backend-production.up.railway.app/process', {
+      const response = await fetch(`${BACKEND_URL}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url, user_id: user.id })
+        body: JSON.stringify({ url, user_id: user.id })
       })
 
       if (response.ok) {
         const data = await response.json()
-        setStatus(`✅ ¡${data.total} clips generados! Revisa "Mis clips".`)
-        for (const clip of data.clips) {
-          await supabase.from('clips').insert({
-            user_id: user.id,
-            title: clip.title,
-            status: 'done',
-            video_url: clip.file
-          })
-        }
+        setStatus(`${data.total} clips generated! Check "My Clips" tab.`)
+        setCredits(prev => Math.max(prev - 1, 0))
       } else {
-        setStatus('❌ Error procesando el vídeo. Inténtalo de nuevo.')
+        const err = await response.text()
+        if (response.status === 402) {
+          setStatus('No credits remaining. Upgrade your plan.')
+        } else {
+          setStatus(`Error: ${err.slice(0, 100)}`)
+        }
       }
-    } catch (error) {
-      setStatus('❌ No se pudo conectar con el servidor.')
+    } catch {
+      setStatus('Could not connect to the server.')
     }
 
     setUrl('')
     setLoading(false)
-    const { data: clipsData } = await supabase.from('clips').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
-    if (clipsData) setClips(clipsData)
+    loadClips(user.id)
   }
 
-  const gold = '#C9A84C'
-  const goldGrad = 'linear-gradient(135deg, #C9A84C, #e8c96a)'
+  const handleCheckout = async (priceId) => {
+    if (!user) return
+    setCheckoutLoading(true)
+    try {
+      const response = await fetch(`${BACKEND_URL}/create-checkout-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          price_id: priceId,
+          user_id: user.id,
+          return_url: window.location.origin + '/dashboard'
+        })
+      })
+      if (response.ok) {
+        const data = await response.json()
+        window.location.href = data.url
+      } else {
+        setStatus('Checkout error. Try again.')
+      }
+    } catch {
+      setStatus('Could not connect to checkout.')
+    }
+    setCheckoutLoading(false)
+  }
 
   const plans = [
     {
-      name: 'Free', price: '$0', clips: '3 clips/mes',
-      features: ['3 créditos', 'Formato 9:16', 'Subtítulos básicos'],
-      color: '#333', cta: 'Plan actual', disabled: true, link: null
+      name: 'Free', price: '$0', clips: '3 clips/month',
+      features: ['3 credits', '9:16 format', 'Basic subtitles'],
+      color: brand, cta: 'Current plan', disabled: true
     },
     {
-      name: 'Creator', price: '$26.99', clips: '200 clips/mes',
-      features: ['200 créditos', 'Subtítulos animados', 'Gameplay overlay', 'Export HD'],
-      color: gold, cta: 'Empezar Creator', popular: true,
-      link: 'https://buy.stripe.com/test_5kQbJ2ff7d3Cezmh0K8bS00'
+      name: 'Creator', price: '$26.99', clips: '200 clips/month',
+      features: ['200 credits', 'Animated subtitles', 'Gameplay overlay', 'HD export'],
+      color: brand, cta: 'Start Creator', popular: true,
+      price_id: 'price_creator'
     },
     {
-      name: 'Pro', price: '$69.99', clips: 'Ilimitado',
-      features: ['Créditos infinitos', 'Editor avanzado', 'Auto-publish', 'Viral Score IA', 'Soporte prioritario'],
-      color: '#a855f7', cta: 'Empezar Pro',
-      link: 'https://buy.stripe.com/test_9B614o7MF5BagHudOy8bS01'
+      name: 'Pro', price: '$69.99', clips: 'Unlimited',
+      features: ['Unlimited credits', 'Advanced editor', 'Auto-publish', 'Viral Score AI', 'Priority support'],
+      color: brand, cta: 'Start Pro',
+      price_id: 'price_pro'
     },
   ]
 
-  return (
-    <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', display: 'flex' }}>
+  const tabs = [
+    { id: 'generate', icon: '⚡', label: 'Generate Clips' },
+    { id: 'clips', icon: '🎬', label: 'My Clips' },
+    { id: 'upgrade', icon: '👑', label: 'Upgrade' },
+  ]
 
-      {/* Sidebar */}
-      <div style={{ width: '220px', minHeight: '100vh', background: '#0d0d0d', borderRight: '1px solid #161616', display: 'flex', flexDirection: 'column', padding: '24px 0', position: 'fixed', top: 0, left: 0 }}>
-        <div style={{ padding: '0 20px 32px' }}>
-          <h1 style={{ color: gold, fontSize: '18px', fontWeight: 'bold', letterSpacing: '3px' }}>PEAK CLIP</h1>
-          <div style={{ fontSize: '9px', color: '#333', letterSpacing: '2px', marginTop: '2px' }}>AI CLIPPING PLATFORM</div>
+  const closeSidebar = () => setSidebarOpen(false)
+
+  return (
+    <div className="app-layout">
+      <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label="Toggle menu">
+        {sidebarOpen ? '✕' : '☰'}
+      </button>
+
+      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
+        <div className="sidebar-header">
+          <div className="sidebar-logo" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '3px', fontSize: '22px' }}>PEAKCLIP</div>
+          <div className="sidebar-sub">AI CLIPPING PLATFORM</div>
         </div>
 
-        {[
-          { id: 'generate', icon: '⚡', label: 'Generar clips' },
-          { id: 'clips', icon: '🎬', label: 'Mis clips' },
-          { id: 'upgrade', icon: '👑', label: 'Upgrade' },
-        ].map(item => (
-          <div key={item.id} onClick={() => setActiveTab(item.id)} style={{
-            padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
-            background: activeTab === item.id ? 'rgba(201,168,76,0.08)' : 'transparent',
-            borderRight: activeTab === item.id ? `2px solid ${gold}` : '2px solid transparent',
-            color: activeTab === item.id ? gold : '#444',
-            fontSize: '13px', fontWeight: activeTab === item.id ? '500' : '400',
-            transition: 'all 0.15s'
-          }}>
-            <span style={{ fontSize: '16px' }}>{item.icon}</span>
-            {item.label}
-          </div>
-        ))}
+        <nav className="sidebar-nav">
+          {tabs.map(item => (
+            <button
+              key={item.id}
+              onClick={() => { setActiveTab(item.id); closeSidebar() }}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTab(item.id); closeSidebar() } }}
+              className={`sidebar-item${activeTab === item.id ? ' active' : ''}`}
+              role="tab"
+              aria-selected={activeTab === item.id}
+            >
+              <span style={{ fontSize: '16px' }}>{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-        <div style={{ marginTop: 'auto', padding: '20px', borderTop: '1px solid #161616' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: goldGrad, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', color: '#000' }}>
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <div className="sidebar-avatar" style={{ background: brandGrad }}>
               {user?.email?.[0]?.toUpperCase()}
             </div>
             <div>
-              <div style={{ fontSize: '11px', color: '#666', maxWidth: '130px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</div>
-              <div style={{ fontSize: '10px', color: gold, fontWeight: 'bold' }}>{plan.toUpperCase()}</div>
+              <div className="sidebar-email">{user?.email}</div>
+              <div className="sidebar-plan" style={{ color: brand }}>{plan.toUpperCase()}</div>
             </div>
           </div>
-          <button onClick={handleLogout} style={{ width: '100%', background: 'transparent', border: '1px solid #1a1a1a', color: '#444', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
-            Cerrar sesión
+          <button onClick={handleLogout} className="sidebar-logout">
+            Sign out
           </button>
         </div>
-      </div>
+      </aside>
 
-      {/* Main content */}
-      <div style={{ marginLeft: '220px', flex: 1, padding: '40px' }}>
+      {sidebarOpen && (
+        <div
+          onClick={closeSidebar}
+          style={{ position: 'fixed', inset: 0, zIndex: 99, background: 'rgba(0,0,0,0.5)' }}
+          aria-hidden="true"
+        />
+      )}
 
-        <div style={{ marginBottom: '40px' }}>
-          <h2 style={{ fontSize: '26px', fontWeight: 'bold', marginBottom: '6px' }}>
-            {activeTab === 'generate' && 'Genera tu clip viral'}
-            {activeTab === 'clips' && 'Mis clips'}
-            {activeTab === 'upgrade' && 'Elige tu plan'}
+      <main className="main-content">
+        <div className="page-header">
+          <h2 className="page-title" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '1px' }}>
+            {activeTab === 'generate' && 'Generate Your Viral Clip'}
+            {activeTab === 'clips' && 'My Clips'}
+            {activeTab === 'upgrade' && 'Choose Your Plan'}
           </h2>
-          <p style={{ color: '#444', fontSize: '14px' }}>
-            {activeTab === 'generate' && 'Pega un link de YouTube o Twitch y la IA hace el resto'}
-            {activeTab === 'clips' && `${clips.length} clips generados hasta ahora`}
-            {activeTab === 'upgrade' && 'Desbloquea más créditos y funciones premium'}
+          <p className="page-subtitle">
+            {activeTab === 'generate' && 'Paste a YouTube or Twitch link — AI does the rest'}
+            {activeTab === 'clips' && `${clips.length} clips generated so far`}
+            {activeTab === 'upgrade' && 'Unlock more credits and premium features'}
           </p>
         </div>
 
         {activeTab === 'generate' && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '32px' }}>
+            <div className="stats-grid">
               {[
-                { label: 'Créditos', value: credits, sub: plan === 'pro' ? '∞ ilimitado' : `de ${plan === 'creator' ? 200 : 3}`, color: credits > 0 ? gold : '#ef4444' },
-                { label: 'Clips totales', value: clips.length, sub: 'generados', color: '#fff' },
-                { label: 'Plan', value: plan.toUpperCase(), sub: plan === 'free' ? 'Click para upgrade' : 'Activo ✓', color: plan === 'pro' ? '#a855f7' : gold, onClick: () => setActiveTab('upgrade') },
+                { label: 'Credits', value: credits, sub: plan === 'pro' ? 'unlimited' : `of ${plan === 'creator' ? 200 : 3}`, color: credits > 0 ? brand : '#ef4444' },
+                { label: 'Total Clips', value: clips.length, sub: 'generated', color: '#fff' },
+                { label: 'Plan', value: plan.toUpperCase(), sub: plan === 'free' ? 'Click to upgrade' : 'Active', color: brand, onClick: () => setActiveTab('upgrade') },
               ].map((s, i) => (
-                <div key={i} onClick={s.onClick} style={{
-                  background: '#0d0d0d', border: '1px solid #161616', borderRadius: '14px',
-                  padding: '22px 24px', cursor: s.onClick ? 'pointer' : 'default',
-                }}>
-                  <div style={{ color: '#444', fontSize: '11px', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '10px' }}>{s.label}</div>
-                  <div style={{ color: s.color, fontSize: '30px', fontWeight: 'bold', marginBottom: '4px' }}>{s.value}</div>
-                  <div style={{ color: '#333', fontSize: '12px' }}>{s.sub}</div>
+                <div
+                  key={i}
+                  onClick={s.onClick}
+                  className={`stat-card${s.onClick ? ' clickable' : ''}`}
+                  role={s.onClick ? 'button' : undefined}
+                  tabIndex={s.onClick ? 0 : undefined}
+                  onKeyDown={s.onClick ? e => { if (e.key === 'Enter') { s.onClick() } } : undefined}
+                >
+                  <div className="stat-label">{s.label}</div>
+                  <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
+                  <div className="stat-sub">{s.sub}</div>
                 </div>
               ))}
             </div>
 
-            <div style={{ background: '#0d0d0d', border: `1px solid ${gold}22`, borderRadius: '16px', padding: '32px', marginBottom: '24px', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: goldGrad, opacity: 0.4 }}></div>
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ fontSize: '13px', color: '#666', display: 'block', marginBottom: '10px', letterSpacing: '1px', textTransform: 'uppercase' }}>URL del vídeo</label>
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <input
-                    type="text"
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                    style={{ flex: 1, padding: '14px 18px', borderRadius: '10px', border: '1px solid #1a1a1a', background: '#080808', color: '#fff', fontSize: '14px', outline: 'none' }}
-                  />
-                  <button onClick={handleSubmit} disabled={loading} style={{
-                    background: loading ? '#1a1a1a' : goldGrad,
-                    color: loading ? '#444' : '#000', border: 'none', borderRadius: '10px',
-                    padding: '14px 28px', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer',
-                    fontSize: '14px', whiteSpace: 'nowrap', minWidth: '160px'
-                  }}>
-                    {loading ? '⏳ Procesando...' : '⚡ Generar clips'}
-                  </button>
-                </div>
+            <div className="process-card">
+              <label className="process-label" htmlFor="video-url">VIDEO URL</label>
+              <div className="process-row">
+                <input
+                  id="video-url"
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={url}
+                  onChange={e => setUrl(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                  className="process-input"
+                />
+                <button onClick={handleSubmit} disabled={loading} className="process-btn">
+                  {loading ? 'Processing...' : '⚡ Generate Clips'}
+                </button>
               </div>
 
               {status && (
-                <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.15)', borderRadius: '8px', padding: '12px 16px', color: gold, fontSize: '13px' }}>
+                <div className="process-status" style={{ marginTop: '20px' }}>
                   {status}
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '24px', marginTop: '24px', paddingTop: '24px', borderTop: '1px solid #111' }}>
-                {['🎯 Detección viral con IA', '📝 Subtítulos automáticos', '📱 Formato 9:16', '🎮 Gameplay overlay'].map((f, i) => (
-                  <div key={i} style={{ fontSize: '12px', color: '#333' }}>{f}</div>
-                ))}
+              <div className="process-features">
+                <span className="process-feature">AI viral detection</span>
+                <span className="process-feature">Auto subtitles</span>
+                <span className="process-feature">9:16 format</span>
+                <span className="process-feature">Smart trimming</span>
               </div>
             </div>
           </>
@@ -217,52 +267,77 @@ export default function Dashboard() {
         {activeTab === 'clips' && (
           <div>
             {clips.length === 0 ? (
-              <div style={{ background: '#0d0d0d', border: '1px dashed #1a1a1a', borderRadius: '16px', padding: '80px', textAlign: 'center' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎬</div>
-                <p style={{ color: '#444', marginBottom: '20px' }}>Aún no tienes clips generados</p>
-                <button onClick={() => setActiveTab('generate')} style={{ background: goldGrad, color: '#000', border: 'none', borderRadius: '8px', padding: '12px 24px', fontWeight: 'bold', cursor: 'pointer' }}>
-                  Generar primer clip
+              <div className="empty-state">
+                <div className="empty-icon">🎬</div>
+                <p className="empty-text">No clips generated yet</p>
+                <button onClick={() => setActiveTab('generate')} className="empty-btn">
+                  Generate your first clip
                 </button>
               </div>
             ) : (
-              <div style={{ display: 'grid', gap: '12px' }}>
+              <div className="clips-list">
                 {clips.map(clip => (
-                  <div key={clip.id} style={{ background: '#0d0d0d', border: '1px solid #161616', borderRadius: '12px', padding: '18px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div style={{ width: '40px', height: '40px', background: '#111', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>🎬</div>
+                  <div key={clip.id} className="clip-item" style={{
+                    borderLeft: `3px solid ${clip.status === 'done' ? brand : clip.status === 'processing' ? '#FFBD2E' : '#555'}`
+                  }}>
+                    <div className="clip-left">
+                      {clip.thumbnail_url ? (
+                        <img
+                          src={clip.thumbnail_url}
+                          alt=""
+                          style={{
+                            width: '64px', height: '114px', borderRadius: '6px',
+                            objectFit: 'cover', flexShrink: 0, background: 'var(--card)'
+                          }}
+                          onError={e => { e.target.style.display = 'none' }}
+                        />
+                      ) : (
+                        <div className="clip-icon">🎬</div>
+                      )}
                       <div>
-                        <div style={{ fontSize: '13px', color: '#888', marginBottom: '4px', maxWidth: '500px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.title}</div>
-                        <div style={{ fontSize: '11px', color: '#333' }}>{new Date(clip.created_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                        <div className="clip-title">{clip.title?.slice(0, 60)}</div>
+                        <div className="clip-date">
+                          {new Date(clip.created_at).toLocaleDateString('en-US', {
+                            day: 'numeric', month: 'long', year: 'numeric',
+                            hour: '2-digit', minute: '2-digit'
+                          })}
+                        </div>
+                        {clip.duration && (
+                          <div style={{ fontSize: '10px', color: brand, marginTop: '4px' }}>
+                            {clip.duration}s
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div className="clip-actions">
+                      {clip.status === 'processing' && (
+                        <span className="clip-status processing">Processing...</span>
+                      )}
                       {clip.status === 'done' && (
-                        <button
-                          onClick={() => window.location.href = `/editor?id=${clip.id}`}
-                          style={{
-                            fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
-                            background: 'rgba(201,168,76,0.08)', color: gold,
-                            border: `1px solid ${gold}22`, cursor: 'pointer'
-                          }}>
-                          ✏️ Editar
-                        </button>
+                        <>
+                          <button
+                            onClick={() => window.location.href = `/editor?id=${clip.id}`}
+                            className="clip-action-btn"
+                          >
+                            Edit
+                          </button>
+                          {clip.video_url && (
+                            <a href={clip.video_url} target="_blank" rel="noopener noreferrer" className="clip-action-btn">
+                              View
+                            </a>
+                          )}
+                        </>
                       )}
-                      {clip.status === 'done' && clip.video_url && (
-                        <a href={clip.video_url} download style={{
-                          fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
-                          background: 'rgba(201,168,76,0.08)', color: gold,
-                          border: `1px solid ${gold}22`, textDecoration: 'none'
+                      {clip.status === 'failed' && (
+                        <span className="clip-status" style={{
+                          background: 'rgba(239,68,68,0.08)', color: '#ef4444',
+                          border: '1px solid rgba(239,68,68,0.13)'
                         }}>
-                          ⬇ Descargar
-                        </a>
+                          Failed
+                        </span>
                       )}
-                      <span style={{
-                        fontSize: '11px', padding: '5px 12px', borderRadius: '20px',
-                        background: clip.status === 'done' ? 'rgba(34,197,94,0.08)' : 'rgba(201,168,76,0.08)',
-                        color: clip.status === 'done' ? '#22c55e' : gold,
-                        border: `1px solid ${clip.status === 'done' ? '#22c55e22' : gold + '22'}`
-                      }}>
-                        {clip.status === 'done' ? '✓ Listo' : '⏳ Procesando'}
+                      <span className={`clip-status ${clip.status === 'done' ? 'done' : clip.status === 'failed' ? '' : 'processing'}`}>
+                        {clip.status === 'done' ? 'Ready' : clip.status === 'failed' ? 'Error' : 'Processing'}
                       </span>
                     </div>
                   </div>
@@ -273,41 +348,41 @@ export default function Dashboard() {
         )}
 
         {activeTab === 'upgrade' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+          <div className="plans-grid">
             {plans.map((p, i) => (
-              <div key={i} style={{
-                background: '#0d0d0d', border: `1px solid ${p.popular ? gold + '44' : '#161616'}`,
-                borderRadius: '16px', padding: '28px', position: 'relative',
-                boxShadow: p.popular ? `0 0 30px ${gold}11` : 'none'
-              }}>
-                {p.popular && <div style={{ position: 'absolute', top: '-1px', left: '50%', transform: 'translateX(-50%)', background: goldGrad, color: '#000', fontSize: '10px', fontWeight: 'bold', padding: '4px 16px', borderRadius: '0 0 8px 8px', letterSpacing: '1px' }}>MÁS POPULAR</div>}
-                <div style={{ color: p.color, fontSize: '13px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '8px' }}>{p.name.toUpperCase()}</div>
-                <div style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '4px' }}>{p.price}<span style={{ fontSize: '13px', color: '#444', fontWeight: 'normal' }}>/mes</span></div>
-                <div style={{ color: '#444', fontSize: '12px', marginBottom: '24px' }}>{p.clips}</div>
-                <div style={{ marginBottom: '24px' }}>
+              <div key={i} className={`plan-card${p.popular ? ' popular' : ''}`}>
+                {p.popular && <div className="plan-popular-badge">MOST POPULAR</div>}
+                <div className="plan-name" style={{ color: p.color, fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '1px' }}>
+                  {p.name.toUpperCase()}
+                </div>
+                <div className="plan-price" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0px' }}>
+                  {p.price}<span className="plan-price-period">/month</span>
+                </div>
+                <div className="plan-clips">{p.clips}</div>
+                <div className="plan-features">
                   {p.features.map((f, j) => (
-                    <div key={j} style={{ fontSize: '13px', color: '#666', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: p.color }}>✓</span> {f}
+                    <div key={j} className="plan-feature">
+                      <span className="plan-feature-check" style={{ color: brand }}>✓</span> {f}
                     </div>
                   ))}
                 </div>
                 <button
-                  disabled={p.disabled}
-                  onClick={() => p.link && window.open(p.link, '_blank')}
+                  disabled={p.disabled || checkoutLoading}
+                  onClick={() => p.price_id && handleCheckout(p.price_id)}
+                  className="plan-btn"
                   style={{
-                    width: '100%', padding: '12px', borderRadius: '8px',
-                    background: p.disabled ? '#111' : p.popular ? goldGrad : `${p.color}22`,
-                    color: p.disabled ? '#333' : p.popular ? '#000' : p.color,
-                    fontWeight: 'bold', cursor: p.disabled ? 'not-allowed' : 'pointer', fontSize: '13px',
-                    border: p.disabled ? '1px solid #1a1a1a' : p.popular ? 'none' : `1px solid ${p.color}44`
-                  }}>
-                  {p.cta}
+                    background: p.disabled ? 'var(--card)' : p.popular ? brandGrad : `${brand}22`,
+                    color: p.disabled ? 'var(--text-dim)' : p.popular ? '#000' : brand,
+                    border: p.disabled ? '1px solid var(--border)' : p.popular ? 'none' : `1px solid ${brand}44`
+                  }}
+                >
+                  {checkoutLoading ? 'Redirecting...' : p.cta}
                 </button>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }

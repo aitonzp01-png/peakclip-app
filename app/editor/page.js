@@ -1,263 +1,396 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { brand, brandGrad, brandDim } from '../../lib/tokens'
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
 
 export default function Editor() {
   const [clip, setClip] = useState(null)
+  const [clipId, setClipId] = useState(null)
+  const [user, setUser] = useState(null)
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(100)
   const [subtitleStyle, setSubtitleStyle] = useState('bold-yellow')
   const [subtitlePosition, setSubtitlePosition] = useState('bottom')
+  const [subtitleText, setSubtitleText] = useState('')
   const [watermark, setWatermark] = useState('')
   const [watermarkPosition, setWatermarkPosition] = useState('top-right')
   const [music, setMusic] = useState('none')
   const [musicVolume, setMusicVolume] = useState(30)
   const [saving, setSaving] = useState(false)
-  const [activePanel, setActivePanel] = useState('trim')
+  const [activeTool, setActiveTool] = useState('trim')
+  const [activeFilter, setActiveFilter] = useState('none')
+  const [playheadPos, setPlayheadPos] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [exportStatus, setExportStatus] = useState('')
+  const [exportUrl, setExportUrl] = useState('')
   const videoRef = useRef(null)
+  const timelineRef = useRef(null)
+  const animRef = useRef(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const clipId = params.get('id')
-    if (clipId) loadClip(clipId)
+    const id = params.get('id')
+    if (id) {
+      setClipId(id)
+      loadClip(id)
+    }
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) setUser(data.user)
+    })
   }, [])
 
   const loadClip = async (id) => {
     const { data } = await supabase.from('clips').select('*').eq('id', id).single()
-    if (data) setClip(data)
+    if (data) {
+      setClip(data)
+      setSubtitleText(data.title || '')
+    }
   }
 
-  const gold = '#C9A84C'
-  const goldGrad = 'linear-gradient(135deg, #C9A84C, #e8c96a)'
-
   const subtitleStyles = [
-    { id: 'bold-yellow', label: 'Bold Yellow', preview: { color: '#FFD700', fontWeight: 'bold', fontSize: '18px', textShadow: '2px 2px 4px #000' } },
-    { id: 'white-outline', label: 'White Outline', preview: { color: '#fff', fontWeight: 'bold', fontSize: '18px', textShadow: '-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000' } },
-    { id: 'neon-green', label: 'Neon Green', preview: { color: '#00ff88', fontWeight: 'bold', fontSize: '18px', textShadow: '0 0 10px #00ff88' } },
-    { id: 'red-fire', label: 'Red Fire', preview: { color: '#ff4444', fontWeight: 'bold', fontSize: '18px', textShadow: '0 0 10px #ff0000' } },
-    { id: 'minimal-white', label: 'Minimal', preview: { color: '#fff', fontWeight: '400', fontSize: '16px', background: 'rgba(0,0,0,0.6)', padding: '4px 10px', borderRadius: '4px' } },
-    { id: 'tiktok-style', label: 'TikTok', preview: { color: '#fff', fontWeight: '900', fontSize: '20px', textShadow: '3px 3px 0 #fe2c55' } },
+    { id: 'bold-yellow', label: 'Bold Yellow', preview: { color: '#FFD700', fontWeight: 'bold', fontSize: '14px', textShadow: '2px 2px 4px #000' } },
+    { id: 'white-outline', label: 'Outline', preview: { color: '#fff', fontWeight: 'bold', fontSize: '14px', textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' } },
+    { id: 'neon-green', label: 'Neon', preview: { color: '#00ff88', fontWeight: 'bold', fontSize: '14px', textShadow: '0 0 8px #00ff88' } },
+    { id: 'red-fire', label: 'Fire', preview: { color: '#ff4444', fontWeight: 'bold', fontSize: '14px', textShadow: '0 0 8px #ff0000' } },
+    { id: 'minimal-white', label: 'Minimal', preview: { color: '#fff', fontWeight: '400', fontSize: '13px', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: '4px' } },
+    { id: 'tiktok-style', label: 'TikTok', preview: { color: '#fff', fontWeight: '900', fontSize: '14px', textShadow: '2px 2px 0 #fe2c55' } },
   ]
 
   const musicTracks = [
-    { id: 'none', label: 'Sin música' },
-    { id: 'epic', label: '🎵 Epic Cinematic' },
-    { id: 'hype', label: '🔥 Hype Beat' },
-    { id: 'chill', label: '🌊 Chill Lofi' },
-    { id: 'gaming', label: '🎮 Gaming Energy' },
-    { id: 'viral', label: '📱 Viral Pop' },
+    { id: 'none', label: 'No music', icon: '🔇' },
+    { id: 'epic', label: 'Epic Cinematic', icon: '🎬' },
+    { id: 'hype', label: 'Hype Beat', icon: '🔥' },
+    { id: 'chill', label: 'Chill Lofi', icon: '🌊' },
+    { id: 'gaming', label: 'Gaming Energy', icon: '🎮' },
+    { id: 'viral', label: 'Viral Pop', icon: '📱' },
   ]
 
-  const panels = [
-    { id: 'trim', icon: '✂️', label: 'Recortar' },
-    { id: 'subtitles', icon: '💬', label: 'Subtítulos' },
-    { id: 'watermark', icon: '🏷️', label: 'Marca de agua' },
-    { id: 'music', icon: '🎵', label: 'Música' },
+  const tools = [
+    { id: 'trim', icon: '✂️', label: 'Trim' },
+    { id: 'subtitles', icon: '💬', label: 'Text' },
+    { id: 'watermark', icon: '©️', label: 'Logo' },
+    { id: 'music', icon: '🎵', label: 'Audio' },
+    { id: 'filter', icon: '✨', label: 'Filter' },
   ]
 
-  const handleExport = async () => {
-    setSaving(true)
-    await new Promise(r => setTimeout(r, 2000))
-    setSaving(false)
-    alert('✅ Clip exportado correctamente. Disponible en "Mis clips".')
-    window.location.href = '/dashboard'
+  const filters = [
+    { id: 'none', label: 'Original', style: {} },
+    { id: 'vivid', label: 'Vivid', style: { filter: 'saturate(1.5) contrast(1.1)' } },
+    { id: 'cinema', label: 'Cinema', style: { filter: 'contrast(1.2) brightness(0.9) sepia(0.2)' } },
+    { id: 'bw', label: 'B&W', style: { filter: 'grayscale(1)' } },
+    { id: 'warm', label: 'Warm', style: { filter: 'sepia(0.4) saturate(1.3)' } },
+    { id: 'cool', label: 'Cool', style: { filter: 'hue-rotate(30deg) saturate(0.9)' } },
+  ]
+
+  const playVideo = () => {
+    if (!videoRef.current) return
+    if (isPlaying) {
+      videoRef.current.pause()
+      cancelAnimationFrame(animRef.current)
+      setIsPlaying(false)
+    } else {
+      videoRef.current.play()
+      setIsPlaying(true)
+      const update = () => {
+        if (videoRef.current) {
+          const pct = (videoRef.current.currentTime / (videoRef.current.duration || 1)) * 100
+          setPlayheadPos(Math.min(pct, 100))
+        }
+        animRef.current = requestAnimationFrame(update)
+      }
+      animRef.current = requestAnimationFrame(update)
+    }
   }
 
-  return (
-    <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
+  const handleTimelineClick = (e) => {
+    if (!timelineRef.current || !videoRef.current) return
+    const rect = timelineRef.current.getBoundingClientRect()
+    const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100))
+    setPlayheadPos(pct)
+    if (videoRef.current.duration) {
+      videoRef.current.currentTime = (pct / 100) * videoRef.current.duration
+    }
+  }
 
-      {/* Topbar */}
-      <div style={{ background: '#0d0d0d', borderBottom: '1px solid #161616', padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <button onClick={() => window.location.href = '/dashboard'} style={{ background: 'transparent', border: '1px solid #222', color: '#555', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
-            ← Volver
-          </button>
-          <h1 style={{ color: gold, fontSize: '16px', fontWeight: 'bold', letterSpacing: '2px' }}>PEAK CLIP <span style={{ color: '#333', fontSize: '12px', letterSpacing: '1px' }}>EDITOR</span></h1>
+  const handleExport = async () => {
+    if (!clipId || !user) return
+    setSaving(true)
+    setExportStatus('Processing video with AI...')
+    setExportUrl('')
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clip_id: clipId,
+          user_id: user.id,
+          video_url: clip?.video_url || '',
+          trim_start: trimStart,
+          trim_end: trimEnd,
+          subtitle_text: subtitleText,
+          subtitle_style: subtitleStyle,
+          subtitle_position: subtitlePosition,
+          watermark_text: watermark,
+          watermark_position: watermarkPosition,
+          music_track: music,
+          music_volume: musicVolume,
+          filter_style: activeFilter,
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setExportStatus('✅ Clip exported successfully!')
+        setExportUrl(data.video_url)
+      } else {
+        const err = await response.text()
+        setExportStatus(`❌ Export failed: ${err.slice(0, 100)}`)
+      }
+    } catch {
+      setExportStatus('❌ Could not connect to export server')
+    }
+
+    setSaving(false)
+  }
+
+  const selectedFilter = filters.find(f => f.id === activeFilter)?.style || {}
+
+  return (
+    <div className="editor-layout">
+      <div className="editor-topbar">
+        <div className="editor-topbar-left">
+          <button onClick={() => window.location.href = '/dashboard'} className="editor-back-btn" aria-label="Back to dashboard">←</button>
+          <span className="editor-brand" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '3px', color: brand }}>
+            PEAKCLIP
+          </span>
+          <span className="editor-separator">|</span>
+          <span className="editor-filename">{clip?.title?.slice(0, 40) || 'Editor'}</span>
+          {clip?.video_url && (
+            <a href={clip.video_url} target="_blank" rel="noopener noreferrer"
+              style={{ marginLeft: '12px', fontSize: '11px', color: brand, textDecoration: 'none' }}>
+              Source ↗
+            </a>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button style={{ background: 'transparent', border: '1px solid #222', color: '#555', padding: '8px 20px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}>
-            Vista previa
+        <div className="editor-topbar-right">
+          <button className="editor-preview-btn" onClick={playVideo}>
+            {isPlaying ? '⏸ Pause' : '▶ Preview'}
           </button>
-          <button onClick={handleExport} disabled={saving} style={{
-            background: saving ? '#333' : goldGrad, color: saving ? '#666' : '#000',
-            border: 'none', borderRadius: '8px', padding: '8px 24px',
-            fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '13px'
-          }}>
-            {saving ? '⏳ Exportando...' : '⬇ Exportar clip'}
+          <button onClick={handleExport} disabled={saving} className="editor-export-btn">
+            {saving ? '⏳ Exporting...' : '⬇ Export'}
           </button>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', height: 'calc(100vh - 57px)' }}>
+      <div className="editor-body">
+        <div className="editor-toolbar">
+          {tools.map(t => (
+            <div
+              key={t.id}
+              onClick={() => setActiveTool(t.id)}
+              className={`editor-tool${activeTool === t.id ? ' active' : ''}`}
+              role="tab"
+              aria-selected={activeTool === t.id}
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === 'Enter') setActiveTool(t.id) }}
+            >
+              <div className="editor-tool-icon">{t.icon}</div>
+              <div className="editor-tool-label">{t.label}</div>
+            </div>
+          ))}
+        </div>
 
-        {/* Preview area */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px', background: '#0a0a0a' }}>
-
-          {/* Phone mockup */}
-          <div style={{ position: 'relative', width: '240px', height: '426px', background: '#111', borderRadius: '32px', border: '3px solid #222', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}>
+        <div className="editor-canvas">
+          <div className="editor-phone">
             {clip?.video_url ? (
-              <video ref={videoRef} src={clip.video_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} controls />
+              <video
+                ref={videoRef}
+                src={clip.video_url}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', ...selectedFilter }}
+                onEnded={() => setIsPlaying(false)}
+              />
             ) : (
-              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)' }}>
-                <div style={{ fontSize: '48px', marginBottom: '12px' }}>🎬</div>
-                <div style={{ fontSize: '12px', color: '#555', textAlign: 'center', padding: '0 20px' }}>Preview del clip aquí</div>
+              <div className="editor-phone-placeholder">
+                <div className="editor-phone-placeholder-icon">🎬</div>
+                <div className="editor-phone-placeholder-text">Clip preview</div>
               </div>
             )}
 
-            {/* Subtitle preview overlay */}
-            <div style={{
-              position: 'absolute',
-              [subtitlePosition === 'bottom' ? 'bottom' : 'top']: '20px',
-              left: '50%', transform: 'translateX(-50%)',
-              width: '90%', textAlign: 'center',
-              ...subtitleStyles.find(s => s.id === subtitleStyle)?.preview
-            }}>
-              Subtítulo de ejemplo
-            </div>
+            {clip?.video_url && subtitleText && subtitleStyle !== 'none' && (
+              <div className="editor-subtitle-overlay" style={{
+                [subtitlePosition === 'bottom' ? 'bottom' : subtitlePosition === 'top' ? 'top' : 'top']: subtitlePosition === 'middle' ? '45%' : '16px',
+                transform: 'translateX(-50%)',
+                ...subtitleStyles.find(s => s.id === subtitleStyle)?.preview
+              }}>
+                {subtitleText}
+              </div>
+            )}
 
-            {/* Watermark preview */}
-            {watermark && (
-              <div style={{
-                position: 'absolute',
-                ...(watermarkPosition === 'top-right' ? { top: '12px', right: '12px' } :
-                   watermarkPosition === 'top-left' ? { top: '12px', left: '12px' } :
-                   watermarkPosition === 'bottom-right' ? { bottom: '40px', right: '12px' } :
-                   { bottom: '40px', left: '12px' }),
-                fontSize: '11px', color: 'rgba(255,255,255,0.8)',
-                background: 'rgba(0,0,0,0.4)', padding: '3px 8px', borderRadius: '4px'
+            {watermark && clip?.video_url && (
+              <div className="editor-watermark" style={{
+                ...(watermarkPosition === 'top-right' ? { top: '10px', right: '10px' } :
+                   watermarkPosition === 'top-left' ? { top: '10px', left: '10px' } :
+                   watermarkPosition === 'bottom-right' ? { bottom: '36px', right: '10px' } :
+                   { bottom: '36px', left: '10px' }),
+                fontFamily: "'Poppins', sans-serif", fontSize: '11px'
               }}>
                 {watermark}
               </div>
             )}
           </div>
 
-          {/* Trim timeline */}
-          <div style={{ width: '100%', maxWidth: '500px', marginTop: '32px' }}>
-            <div style={{ fontSize: '12px', color: '#444', marginBottom: '12px', textAlign: 'center' }}>Timeline — arrastra para recortar</div>
-            <div style={{ background: '#111', borderRadius: '8px', height: '48px', position: 'relative', border: '1px solid #1a1a1a', overflow: 'hidden' }}>
-              <div style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: `${trimStart}%`, width: `${trimEnd - trimStart}%`,
-                background: `${gold}22`, border: `2px solid ${gold}`,
-                borderRadius: '4px'
-              }} />
-              {Array.from({ length: 20 }).map((_, i) => (
-                <div key={i} style={{ position: 'absolute', left: `${i * 5}%`, top: '30%', bottom: '30%', width: '1px', background: '#222' }} />
+          <div className="editor-timeline-wrap">
+            <div
+              className="editor-timeline-track"
+              ref={timelineRef}
+              onClick={handleTimelineClick}
+              style={{ cursor: 'pointer', position: 'relative' }}
+            >
+              {Array.from({ length: 40 }).map((_, i) => (
+                <div key={i} style={{
+                  position: 'absolute', left: `${i * 2.5}%`, bottom: '20%',
+                  width: '1.5%', height: `${20 + Math.sin(i * 0.8) * 15}%`,
+                  background: `rgba(255,255,255,${0.04 + Math.sin(i * 0.8) * 0.04})`,
+                  borderRadius: '1px'
+                }} />
               ))}
+              <div className="editor-timeline-selection" style={{
+                left: `${trimStart}%`, width: `${trimEnd - trimStart}%`,
+                background: brandDim,
+              }} />
+              <div className="editor-timeline-playhead" style={{ left: `${playheadPos}%` }} />
+
+              {/* Trim handles */}
+              <div
+                style={{
+                  position: 'absolute', left: `${trimStart}%`, top: 0, bottom: 0,
+                  width: '4px', background: brand, zIndex: 5, cursor: 'ew-resize'
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  const onMove = (ev) => {
+                    const rect = timelineRef.current.getBoundingClientRect()
+                    const pct = Math.max(0, Math.min(trimEnd - 5, ((ev.clientX - rect.left) / rect.width) * 100))
+                    setTrimStart(pct)
+                  }
+                  const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+                  document.addEventListener('mousemove', onMove)
+                  document.addEventListener('mouseup', onUp)
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute', left: `${trimEnd}%`, top: 0, bottom: 0,
+                  width: '4px', background: brand, zIndex: 5, cursor: 'ew-resize'
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  const onMove = (ev) => {
+                    const rect = timelineRef.current.getBoundingClientRect()
+                    const pct = Math.max(trimStart + 5, Math.min(100, ((ev.clientX - rect.left) / rect.width) * 100))
+                    setTrimEnd(pct)
+                  }
+                  const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+                  document.addEventListener('mousemove', onMove)
+                  document.addEventListener('mouseup', onUp)
+                }}
+              />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '11px', color: '#444' }}>
+            <div className="editor-timeline-info">
               <span>0:00</span>
-              <span style={{ color: gold }}>Selección: {trimStart}% — {trimEnd}%</span>
+              <span className="editor-timeline-duration" style={{ color: brand }}>
+                {Math.round((trimEnd - trimStart) * 0.45)}s selected
+              </span>
               <span>0:45</span>
             </div>
           </div>
+
+          {exportStatus && (
+            <div style={{
+              fontSize: '12px', color: exportStatus.includes('✅') ? brand : exportStatus.includes('❌') ? '#ef4444' : '#999',
+              fontFamily: "'Poppins', sans-serif", marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px'
+            }}>
+              {exportStatus}
+              {exportUrl && (
+                <a href={exportUrl} target="_blank" rel="noopener noreferrer"
+                  style={{ color: brand, textDecoration: 'underline', fontSize: '12px' }}>
+                  View exported clip ↗
+                </a>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Right panel */}
-        <div style={{ background: '#0d0d0d', borderLeft: '1px solid #161616', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-          {/* Panel tabs */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '1px solid #161616' }}>
-            {panels.map(p => (
-              <div key={p.id} onClick={() => setActivePanel(p.id)} style={{
-                padding: '12px 4px', textAlign: 'center', cursor: 'pointer',
-                background: activePanel === p.id ? 'rgba(201,168,76,0.08)' : 'transparent',
-                borderBottom: activePanel === p.id ? `2px solid ${gold}` : '2px solid transparent',
-                transition: 'all 0.15s'
-              }}>
-                <div style={{ fontSize: '18px', marginBottom: '3px' }}>{p.icon}</div>
-                <div style={{ fontSize: '10px', color: activePanel === p.id ? gold : '#444' }}>{p.label}</div>
-              </div>
-            ))}
+        <div className="editor-panel">
+          <div className="editor-panel-header">
+            <div className="editor-panel-title">
+              {tools.find(t => t.id === activeTool)?.icon} {tools.find(t => t.id === activeTool)?.label}
+            </div>
           </div>
 
-          {/* Panel content */}
-          <div style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
-
-            {/* TRIM */}
-            {activePanel === 'trim' && (
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '20px' }}>Recortar clip</div>
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Inicio ({trimStart}%)</label>
+          <div className="editor-panel-body">
+            {activeTool === 'trim' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div>
+                  <div className="editor-slider-row">
+                    <span className="editor-slider-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Start</span>
+                    <span className="editor-slider-value" style={{ color: brand }}>{trimStart}%</span>
+                  </div>
                   <input type="range" min="0" max={trimEnd - 5} value={trimStart}
                     onChange={e => setTrimStart(Number(e.target.value))}
-                    style={{ width: '100%', accentColor: gold }} />
-                </div>
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Fin ({trimEnd}%)</label>
-                  <input type="range" min={trimStart + 5} max="100" value={trimEnd}
-                    onChange={e => setTrimEnd(Number(e.target.value))}
-                    style={{ width: '100%', accentColor: gold }} />
-                </div>
-                <div style={{ background: '#111', borderRadius: '8px', padding: '12px', fontSize: '12px', color: '#555' }}>
-                  Duración seleccionada: <span style={{ color: gold }}>{Math.round((trimEnd - trimStart) * 0.45)}s</span> de 45s
-                </div>
-              </div>
-            )}
-
-            {/* SUBTITLES */}
-            {activePanel === 'subtitles' && (
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '20px' }}>Estilo de subtítulos</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '20px' }}>
-                  {subtitleStyles.map(s => (
-                    <div key={s.id} onClick={() => setSubtitleStyle(s.id)} style={{
-                      background: subtitleStyle === s.id ? 'rgba(201,168,76,0.1)' : '#111',
-                      border: `1px solid ${subtitleStyle === s.id ? gold : '#1a1a1a'}`,
-                      borderRadius: '8px', padding: '12px', cursor: 'pointer', textAlign: 'center'
-                    }}>
-                      <div style={{ ...s.preview, fontSize: '12px', marginBottom: '6px' }}>Aa</div>
-                      <div style={{ fontSize: '10px', color: subtitleStyle === s.id ? gold : '#555' }}>{s.label}</div>
-                    </div>
-                  ))}
+                    className="editor-slider" />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>Posición</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                    {['bottom', 'top', 'middle'].map(pos => (
-                      <div key={pos} onClick={() => setSubtitlePosition(pos)} style={{
-                        background: subtitlePosition === pos ? 'rgba(201,168,76,0.1)' : '#111',
-                        border: `1px solid ${subtitlePosition === pos ? gold : '#1a1a1a'}`,
-                        borderRadius: '6px', padding: '8px', cursor: 'pointer', textAlign: 'center',
-                        fontSize: '12px', color: subtitlePosition === pos ? gold : '#555'
-                      }}>
-                        {pos === 'bottom' ? '⬇ Abajo' : pos === 'top' ? '⬆ Arriba' : '↔ Centro'}
-                      </div>
-                    ))}
+                  <div className="editor-slider-row">
+                    <span className="editor-slider-label" style={{ fontFamily: "'Poppins', sans-serif" }}>End</span>
+                    <span className="editor-slider-value" style={{ color: brand }}>{trimEnd}%</span>
                   </div>
+                  <input type="range" min={trimStart + 5} max="100" value={trimEnd}
+                    onChange={e => setTrimEnd(Number(e.target.value))}
+                    className="editor-slider" />
+                </div>
+                <div className="editor-duration-box">
+                  Duration: <span className="editor-duration-value">{Math.round((trimEnd - trimStart) * 0.45)}s</span>
                 </div>
               </div>
             )}
 
-            {/* WATERMARK */}
-            {activePanel === 'watermark' && (
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '20px' }}>Marca de agua</div>
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Texto</label>
+            {activeTool === 'subtitles' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Text</span>
                   <input
-                    type="text" placeholder="@tu_usuario"
-                    value={watermark} onChange={e => setWatermark(e.target.value)}
-                    style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #222', background: '#111', color: '#fff', fontSize: '13px', outline: 'none' }}
+                    type="text" placeholder="Enter subtitle text..."
+                    value={subtitleText}
+                    onChange={e => setSubtitleText(e.target.value)}
+                    className="editor-input"
+                    style={{ fontFamily: "'Poppins', sans-serif" }}
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>Posición</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                    {[
-                      { id: 'top-right', label: '↗ Arriba derecha' },
-                      { id: 'top-left', label: '↖ Arriba izquierda' },
-                      { id: 'bottom-right', label: '↘ Abajo derecha' },
-                      { id: 'bottom-left', label: '↙ Abajo izquierda' },
-                    ].map(p => (
-                      <div key={p.id} onClick={() => setWatermarkPosition(p.id)} style={{
-                        background: watermarkPosition === p.id ? 'rgba(201,168,76,0.1)' : '#111',
-                        border: `1px solid ${watermarkPosition === p.id ? gold : '#1a1a1a'}`,
-                        borderRadius: '6px', padding: '8px', cursor: 'pointer', textAlign: 'center',
-                        fontSize: '11px', color: watermarkPosition === p.id ? gold : '#555'
-                      }}>
-                        {p.label}
+                  <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Style</span>
+                  <div className="editor-grid-2">
+                    {subtitleStyles.map(s => (
+                      <div key={s.id} onClick={() => setSubtitleStyle(s.id)}
+                        className={`editor-option${subtitleStyle === s.id ? ' active' : ''}`}
+                        style={{ fontFamily: "'Poppins', sans-serif" }}>
+                        <div className="editor-option-preview" style={{ ...s.preview, fontSize: '11px', marginBottom: '5px' }}>Aa</div>
+                        <div className="editor-option-label">{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Position</span>
+                  <div className="editor-grid-3">
+                    {[{ id: 'top', label: '⬆ Top' }, { id: 'middle', label: '↔ Mid' }, { id: 'bottom', label: '⬇ Bot' }].map(p => (
+                      <div key={p.id} onClick={() => setSubtitlePosition(p.id)}
+                        className={`editor-option${subtitlePosition === p.id ? ' active' : ''}`}
+                        style={{ flex: 1, fontFamily: "'Poppins', sans-serif" }}>
+                        <div className="editor-option-label">{p.label}</div>
                       </div>
                     ))}
                   </div>
@@ -265,44 +398,93 @@ export default function Editor() {
               </div>
             )}
 
-            {/* MUSIC */}
-            {activePanel === 'music' && (
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '20px' }}>Música de fondo</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+            {activeTool === 'watermark' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Text / Handle</span>
+                  <input
+                    type="text" placeholder="@your_handle"
+                    value={watermark}
+                    onChange={e => setWatermark(e.target.value)}
+                    className="editor-input"
+                    style={{ fontFamily: "'Poppins', sans-serif" }}
+                  />
+                </div>
+                <div>
+                  <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Position</span>
+                  <div className="editor-grid-2">
+                    {[
+                      { id: 'top-left', label: '↖ Top Left' },
+                      { id: 'top-right', label: '↗ Top Right' },
+                      { id: 'bottom-left', label: '↙ Bot Left' },
+                      { id: 'bottom-right', label: '↘ Bot Right' },
+                    ].map(p => (
+                      <div key={p.id} onClick={() => setWatermarkPosition(p.id)}
+                        className={`editor-option${watermarkPosition === p.id ? ' active' : ''}`}
+                        style={{ fontFamily: "'Poppins', sans-serif" }}>
+                        <div className="editor-option-label">{p.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTool === 'music' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Audio track</span>
+                <div className="editor-music-list">
                   {musicTracks.map(t => (
-                    <div key={t.id} onClick={() => setMusic(t.id)} style={{
-                      background: music === t.id ? 'rgba(201,168,76,0.1)' : '#111',
-                      border: `1px solid ${music === t.id ? gold : '#1a1a1a'}`,
-                      borderRadius: '8px', padding: '12px 16px', cursor: 'pointer',
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                    }}>
-                      <span style={{ fontSize: '13px', color: music === t.id ? gold : '#666' }}>{t.label}</span>
-                      {music === t.id && <span style={{ fontSize: '10px', color: gold }}>✓ Seleccionado</span>}
+                    <div key={t.id} onClick={() => setMusic(t.id)}
+                      className={`editor-music-item${music === t.id ? ' active' : ''}`}
+                      style={{ fontFamily: "'Poppins', sans-serif" }}>
+                      <span className="editor-music-label">{t.icon} {t.label}</span>
+                      {music === t.id && <span className="editor-music-check" style={{ color: brand }}>▶</span>}
                     </div>
                   ))}
                 </div>
                 {music !== 'none' && (
-                  <div>
-                    <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}>Volumen ({musicVolume}%)</label>
+                  <div style={{ marginTop: '8px' }}>
+                    <div className="editor-slider-row">
+                      <span className="editor-slider-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Volume</span>
+                      <span className="editor-slider-value" style={{ color: brand }}>{musicVolume}%</span>
+                    </div>
                     <input type="range" min="0" max="100" value={musicVolume}
                       onChange={e => setMusicVolume(Number(e.target.value))}
-                      style={{ width: '100%', accentColor: gold }} />
+                      className="editor-slider" />
                   </div>
                 )}
               </div>
             )}
+
+            {activeTool === 'filter' && (
+              <div>
+                <span className="editor-section-label" style={{ fontFamily: "'Poppins', sans-serif" }}>Visual filters</span>
+                <div className="editor-grid-2">
+                  {filters.map(f => (
+                    <div key={f.id} onClick={() => setActiveFilter(f.id)}
+                      className={`editor-option${activeFilter === f.id ? ' active' : ''}`}
+                      style={{ fontFamily: "'Poppins', sans-serif" }}>
+                      <div style={{
+                        height: '60px',
+                        background: 'linear-gradient(135deg, #1a1a2e, #0f3460)',
+                        ...f.style,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px',
+                        borderRadius: '8px'
+                      }}>
+                        🎬
+                      </div>
+                      <div className="editor-option-label">{f.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Export button bottom */}
-          <div style={{ padding: '16px 20px', borderTop: '1px solid #161616' }}>
-            <button onClick={handleExport} disabled={saving} style={{
-              width: '100%', padding: '13px', borderRadius: '8px', border: 'none',
-              background: saving ? '#333' : goldGrad,
-              color: saving ? '#666' : '#000',
-              fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '14px'
-            }}>
-              {saving ? '⏳ Exportando...' : '⬇ Exportar clip final'}
+          <div className="editor-panel-footer">
+            <button onClick={handleExport} disabled={saving} className="editor-panel-footer-btn">
+              {saving ? '⏳ Exporting...' : '⬇ Export clip'}
             </button>
           </div>
         </div>
